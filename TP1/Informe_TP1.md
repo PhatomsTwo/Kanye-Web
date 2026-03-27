@@ -58,23 +58,21 @@ Este mecanismo evita que los paquetes queden infinitamente circulando por la red
 a. Routers no default gateway (sin LAN debajo): al momento de re-empaquetar los paquetes, modificar (o no) en uno o más bits la payload. Documentar de manera secreta qué paquetes fueron modificados y que paquetes no (registrar payload + destino). Reenviar el paquete. 
 b. Hosts / End devices: al enviar paquetes aplicar técnicas de EDAC. Al recibir paquetes, determinar si fueron o no modificados. Justificar. 
 
-
-Envio
+#### Envio
 En el calculo de EDAC utilizamos paridad, para la realización del mismo contamos la cantidad de 1 por nibble. Utilizamos paridad par, de tal forma que si tenemos cantidad de 1 par ponemos un 0 y si tenemos impar ponemos un 1.
 1110 0100 0010 0000 (E420)
 Nibble paridad par: 1110
-Recibida
+#### Recibida
 Recibimos el siguiente paquete:
 Payload: 9FE4
 EDAC: 6
 Determinamos que el mismo fue modificado, ya que se envío con detección de errores XOR. Al realizar el calculo de validación obtenemos:
 Payload en binario: 1001 1111 1110 0100
+
 Checksum:
-1001 XOR 1111 = 0110
-
-0110 XOR 1110 = 1000
-
-1000 XOR 0100 = 1100
+- 1001 XOR 1111 = 0110
+- 0110 XOR 1110 = 1000
+- 1000 XOR 0100 = 1100
 
 Resultado Final (Checksum) = 1100 
 El resultado final equivale a una “C” en hexadecimal, el enviado es un 6. Podemos concluir que fue alterado. Para encontrar posibles valores, realizamos cambios en los nibbles recibidos para que las operaciones XOR al final termine en un 6. Estas son algunas de las combinaciones posibles:
