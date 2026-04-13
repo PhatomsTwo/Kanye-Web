@@ -59,9 +59,14 @@ Interfaces traseras: Incluye conector de energía AC , conector RPS , salida de 
 
 ### 2. Procedimiento de Configuración 
 a) Conexión a la Consola
+
 Conectar la PC al puerto de consola del switch utilizando un cable Serie a RJ-45.En caso de ser necesario, utilizar un adaptador Serie a USB.Configurar el software PuTTY para acceder mediante el puerto serie a 9600 baudios.
+
 b) Administración del Switch
+
 Acceder a las opciones de administración mediante la consola.Realizar la modificación de las claves de acceso del equipo.
+
 c) Configuración de Red y Pruebas
+
 Conectar las computadoras de dos o más grupos al switch utilizando los cables armados en la Parte 1.
 Configurar el direccionamiento de red en las estaciones de trabajo.Verificar conectividad mediante el comando ping o mediante la captura de paquetes para analizar el comportamiento de protocolos como ARP, NDP e ICMP.
