@@ -148,3 +148,47 @@ No. La evidencia del simulador lo muestra en tres puntos:
 3. **A veces la solución no es más de lo mismo.** El cache descarga 40% de lecturas sin sumar un Compute, la cola absorbe picos sin sumar capacidad y el Search Engine arregla un SEARCH lento que clonar Compute no soluciona.
 
 En conclusión, escalar horizontalmente mejora **solo mientras ese componente sea el cuello de botella y el tráfico justifique el costo de mantenimiento**. Pasado ese punto, el límite se mueve a otro servicio y seguir clonando solo agrega costo. La mejora real viene de escalar el componente correcto y separar por tipo de tráfico, no de duplicar todo.
+
+---
+
+### **6) Sobrevivir**
+
+Hice dos partidas en modo survival. Las dos cayeron, pero por motivos opuestos, y justo por eso sirven: la primera por **falta de capacidad** y la segunda por un **error de conexión**. Juntas muestran que sobrevivir no es solo "agregar hardware".
+
+#### Partida 1 — Caída por falta de cómputo (score 8988)
+
+![Topología partida 1](6_survival_fallido_topology.png)
+
+Arquitectura: CDN, Storage, Firewall, Queue, 3× Compute y Cache.
+
+A los ~3 minutos entró una ráfaga de tráfico **WRITE (45%)**. Como los WRITE no son cacheables, el Cache no ayudó en nada: fueron todos directo a los 3 Compute, que no alcanzaron a drenar la cola. La cola se llenó y empezó a descartar escrituras (27 WRITE fallidos), tirando la reputación a 33%.
+
+* **Cuello que apareció primero:** el Compute. 3 nodos T1 (~13 rps) no bancaron el pico.
+* **Tipo de problema:** capacidad. Faltó throughput de cómputo y una reserva de presupuesto para reaccionar al burst.
+
+#### Partida 2 — 196.025 pts, caída por mala conexión (sobrevivió 13m 6s)
+
+![Topología partida 2](6_survival_200k_topology.png)
+
+![Game over partida 2](6_survival_200k.png)
+
+Arquitectura final (la grande): CDN, Storage, Firewall, Load Balancer, Queue, múltiples Compute, Cache, Search Engine, NoSQL, Read Replica y SQL DB.
+
+Elegí cada componente para que cada tipo de tráfico tenga un servicio especializado y ninguno se vuelva el cuello único: CDN y Storage sacan estáticos y uploads del Compute, Cache + Replica + NoSQL reparten la lectura, el Search Engine acelera las búsquedas, la SQL queda solo para escrituras, el Firewall filtra ataques y el LB + Queue absorben los picos.
+
+Cada tipo de tráfico pega contra su servicio óptimo (el detalle de cada componente ya está en los puntos 1, 4 y 5): **STATIC** → CDN · **UPLOAD** → Storage · **READ** → Cache → Replica/NoSQL · **SEARCH** → Search Engine · **WRITE** → SQL DB · **MALICIOUS** → Firewall. El Load Balancer y la Queue reparten y amortiguan todo el tráfico dinámico.
+
+Sobrevivió 13 minutos, pero al escalar fui agregando Compute y bases **sin cablear bien el ruteo de lectura**. El resultado: **151 READ fallidos "por capacidad o rutas faltantes"**, y la prueba está en que el **NoSQL quedó ocioso (Load 0/15)** mientras las lecturas se caían. La capacidad estaba ahí, pero los READ no tenían camino hacia ella.
+
+* **Cuello que apareció primero:** la lectura (READ), pero no por falta de recursos sino por **ruteo mal conectado**.
+* **Tipo de problema:** diseño/conexión, no capacidad.
+* **Qué escalaría con más presupuesto:** nada nuevo todavía. Primero **conectaría bien** los nodos que ya tenía ociosos (el NoSQL y la Replica al camino de lectura). Recién después subiría el tier de la SQL DB y agregaría más réplicas de lectura.
+
+#### Conclusión
+
+Las dos partidas muestran las dos caras del mismo problema:
+
+* **Partida 1:** el cuello fue **capacidad** (poco Compute para un burst de WRITE).
+* **Partida 2:** el cuello fue **conexión** (capacidad de sobra, pero los READ sin ruta, con un NoSQL pagando mantenimiento al 0% de uso).
+
+La lección es que escalar no alcanza: hay que **escalar el componente correcto y conectarlo bien**. Un nodo sin la conexión adecuada es plata tirada, porque paga costo de mantenimiento sin aportar throughput. La estabilidad real (ganar más de lo que cuesta expandir) se logra entendiendo dónde está el cuello y ruteándolo, no agregando hardware a ciegas. El mejor resultado fue 196.025 puntos; no llegué a la condición de "victoria" (>300 mil), pero las dos caídas dejaron el aprendizaje más claro que un número.
