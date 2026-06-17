@@ -93,3 +93,58 @@ Armé la tabla utilizando algunos ejemplos prácticos, orientados a escenarios q
 
 * **Procesamiento del Backlog (Remanente):** Aunque la entrada de nuevas peticiones se detiene por completo (Rate = 0), después de la queue, la computadora sigue trabajando.
 * **Desacople temporal:** Esto demuestra el principio de desacople de una cola de mensajes. La computadora continúa procesando de forma asíncrona todos los paquetes que quedaron almacenados en el buffer de la *queue* durante el pico de tráfico, hasta que la cola finalmente se vacía y el sistema vuelve al reposo.
+
+---
+
+### **4) Primera infraestructura mínima**
+
+Armé una arquitectura mínima que cubre los cuatro tipos de tráfico pedidos. El simulador no deja conectar el Firewall directo al Compute, así que sumé un Load Balancer en el medio (con un solo Compute todavía no reparte nada).
+
+![Arquitectura mínima](4_arq_minima.png)
+
+Componentes: **Firewall, CDN, Load Balancer, Compute, SQL DB y Storage** ($385 en total). El tráfico estático entra por el CDN; el resto pasa por Firewall → Load Balancer → Compute, que deriva a SQL DB (lecturas, escrituras y búsquedas) o a Storage (uploads). El Firewall descarta el tráfico malicioso.
+
+* **a) Arquitectura inicial:** la de la imagen, con el rate en 0.
+* **b) Presupuesto inicial:** $2000; tras construir queda ~$1615.
+* **c) Salud de servicios:** los seis arrancan al 100%.
+* **d) Fallo:** subiendo el rate de 5 a 40 req/s, cerca de los 11 req/s el Compute se pone en rojo y empieza a perder peticiones.
+
+**¿Qué componente falló primero?**
+
+El Compute. Por ahí pasa casi todo el tráfico dinámico (lo único que lo esquiva es el estático, que va por el CDN), así que es el primero en saturarse.
+
+**¿Por qué falló?**
+
+Procesa pocas peticiones a la vez (capacidad 4) y cada una tarda 600 ms, o sea que no aguanta más de 6 o 7 por segundo. Cuando el tráfico supera eso, se le llena la cola y descarta el resto. La SQL ni se inmuta, porque el Compute le entrega mucho menos de lo que puede manejar.
+
+**¿Fue capacidad, diseño, costo o seguridad?**
+
+De diseño, que termina siendo un problema de capacidad. No fue por plata (sobraba presupuesto) ni por seguridad (el Firewall bloqueó todos los ataques). El problema es tener un único Compute sin forma de escalar. Eso se resuelve en el punto 5.
+
+---
+
+### **5) Escalabilidad y balanceo**
+
+Sobre la base del punto 4 escalé la arquitectura para aguantar más tráfico, aplicando varias estrategias a la vez. El resultado sostiene hasta ~15 req/s con reputación al 100% y todos los servicios sanos; por encima de ese rate empieza a degradarse.
+
+![Arquitectura escalable](5_arq_escalable.png)
+
+Componentes agregados: **Queue, un segundo Compute, Cache, Read Replica y Search Engine** (costo total ~$770). El ruteo queda así: STATIC por el CDN, los Compute pull desde la cola y derivan READ/SEARCH al Cache, WRITE directo a la SQL y UPLOAD al Storage; en el cache-miss, READ va a la Replica y SEARCH al Search Engine.
+
+**Estrategias aplicadas y su efecto:**
+
+* **Más cómputo + balanceador:** pasé de 1 a 2 Compute detrás del Load Balancer. Ahora el LB sí reparte y el embudo del punto 4 desaparece.
+* **Cola de mensajes:** la Queue se ubica entre el LB y los Compute. Absorbe los picos en su buffer y los Compute la drenan en paralelo, en vez de descartar peticiones de golpe.
+* **Caché:** el Memory Cache resuelve ~40% de las lecturas sin tocar la base, bajando la carga del recurso más caro y lento.
+* **Réplica de lectura:** la Read Replica absorbe los READ y deja al master solo con las escrituras.
+* **Separar por tipo de tráfico:** Search Engine para SEARCH (100 ms vs 300 ms de la SQL), Replica para READ, SQL master para WRITE, CDN para STATIC y Storage para UPLOAD. Cada tipo pega contra su servicio óptimo.
+
+**¿Escalar horizontalmente siempre mejora el sistema?**
+
+No. La evidencia del simulador lo muestra en tres puntos:
+
+1. **El cuello de botella se traslada, no desaparece.** Pasar de 1 a 2 Compute mejoró el throughput, pero llega un momento en que el límite salta a la SQL DB: con la base saturada (anillo rojo) y los Compute en verde, agregar un Compute más no sube nada.
+2. **Cada nodo cuesta upkeep constante** (y sube de 1× a 2× en 10 minutos). Sobredimensionar lleva a tener la salud al 100% pero el presupuesto cayendo: se puede "ganar" en estabilidad y perder por costo.
+3. **A veces la solución no es más de lo mismo.** El cache descarga 40% de lecturas sin sumar un Compute, la cola absorbe picos sin sumar capacidad y el Search Engine arregla un SEARCH lento que clonar Compute no soluciona.
+
+En conclusión, escalar horizontalmente mejora **solo mientras ese componente sea el cuello de botella y el tráfico justifique el costo de mantenimiento**. Pasado ese punto, el límite se mueve a otro servicio y seguir clonando solo agrega costo. La mejora real viene de escalar el componente correcto y separar por tipo de tráfico, no de duplicar todo.
